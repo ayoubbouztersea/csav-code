@@ -29,7 +29,7 @@ except ImportError:  # pragma: no cover - optional dependency
     HAS_XGBOOST = False
 
 
-DATA_DEFAULT = Path("notebooks/DF_ML_M1.csv")
+DATA_DEFAULT = Path("data/DF_ML_M1.csv")
 MODEL_DEFAULT = Path("models/article_count_classifier.joblib")
 METRICS_DEFAULT = Path("models/article_count_metrics.json")
 
