@@ -289,12 +289,25 @@ def main() -> None:
     logger.info("Building preprocessing pipeline...")
     preprocessor, numeric_cols, categorical_cols = build_preprocessor(X)
 
-    # Split data (no stratification - using regression approach)
-    logger.info(f"Splitting data (test_size={args.test_size})...")
+    # Split data with stratification
+    logger.info(f"Splitting data (test_size={args.test_size}, stratified)...")
+    
+    # For stratification, bin rare classes to avoid errors with classes having <2 samples
+    y_stratify = y.copy()
+    value_counts = y_stratify.value_counts()
+    rare_classes = value_counts[value_counts < 2].index.tolist()
+    if rare_classes:
+        logger.warning(f"Rare classes with <2 samples found: {rare_classes}. Binning to nearest valid class for stratification.")
+        # Map rare classes to the nearest common class (0, 1, 2, or 3)
+        for rare_class in rare_classes:
+            nearest = min(CLASS_LABELS, key=lambda x: abs(x - rare_class))
+            y_stratify = y_stratify.replace(rare_class, nearest)
+    
     X_train, X_test, y_train, y_test = train_test_split(
         X, y,
         test_size=args.test_size,
         random_state=RANDOM_STATE,
+        stratify=y_stratify,
     )
     logger.info(f"Training set size: {len(X_train)}")
     logger.info(f"Test set size: {len(X_test)}")
