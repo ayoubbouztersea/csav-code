@@ -128,19 +128,65 @@ def validate_data(df: pd.DataFrame) -> None:
 
 def prepare_features_target(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series]:
     """Separate features and target, exclude specified columns."""
+    initial_rows = len(df)
+    logger.info(f"Initial dataset size: {initial_rows} rows")
+
     # Drop excluded columns if they exist
     cols_to_drop = [col for col in EXCLUDE_COLUMNS if col in df.columns]
     if cols_to_drop:
         logger.info(f"Excluding columns: {cols_to_drop}")
         df = df.drop(columns=cols_to_drop)
 
-    # Separate target
+    # =========================================================================
+    # DATA VALIDATION: Clean target column before conversion
+    # =========================================================================
+    logger.info("Validating target column...")
+
+    # Check for missing values in target
+    na_count = df[TARGET_COLUMN].isna().sum()
+    if na_count > 0:
+        logger.warning(f"Found {na_count} NA/NaN values in target column '{TARGET_COLUMN}'")
+
+    # Check for infinite values in target (if numeric)
+    if pd.api.types.is_numeric_dtype(df[TARGET_COLUMN]):
+        inf_count = np.isinf(df[TARGET_COLUMN].replace([np.nan], 0)).sum()
+        if inf_count > 0:
+            logger.warning(f"Found {inf_count} infinite values in target column '{TARGET_COLUMN}'")
+    else:
+        inf_count = 0
+
+    # Create mask for valid rows (not NA, not infinite)
+    valid_mask = df[TARGET_COLUMN].notna()
+    if pd.api.types.is_numeric_dtype(df[TARGET_COLUMN]):
+        valid_mask &= ~np.isinf(df[TARGET_COLUMN])
+
+    # Filter to valid rows only
+    invalid_count = (~valid_mask).sum()
+    if invalid_count > 0:
+        logger.warning(f"Dropping {invalid_count} rows with invalid target values (NA or inf)")
+        df = df[valid_mask].reset_index(drop=True)
+        logger.info(f"Dataset size after cleaning: {len(df)} rows")
+
+    # Validate we still have data
+    if len(df) == 0:
+        logger.error("No valid data remaining after cleaning target column!")
+        sys.exit(1)
+
+    # Separate target - now safe to convert to int
     y = df[TARGET_COLUMN].astype(int)
     X = df.drop(columns=[TARGET_COLUMN])
 
+    # Log target distribution
     logger.info(f"Features shape: {X.shape}")
     logger.info(f"Target shape: {y.shape}")
     logger.info(f"Target distribution:\n{y.value_counts().sort_index()}")
+
+    # Validate target values are in expected range
+    unique_values = sorted(y.unique())
+    logger.info(f"Unique target values: {unique_values}")
+    out_of_range = [v for v in unique_values if v < 0 or v > 3]
+    if out_of_range:
+        logger.warning(f"Target values outside expected range [0-3]: {out_of_range}")
 
     return X, y
 
