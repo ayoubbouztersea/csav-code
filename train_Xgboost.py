@@ -283,6 +283,16 @@ def main() -> None:
 
     # Split data with stratification
     logger.info(f"Splitting data (test_size={args.test_size}, stratified)...")
+
+    # #region agent log H1,H4,H5
+    import json as _json
+    _log_path = "/Users/ayoubbouz/Documents/DS_Projects/csav-code/.cursor/debug.log"
+    _vc = y.value_counts()
+    _rare_classes = [(int(k), int(v)) for k, v in _vc.items() if v < 2]
+    _debug_data3 = {"hypothesisId": "H1,H4,H5", "location": "train_Xgboost.py:before_split", "message": "Pre-split analysis", "data": {"total_samples": len(y), "num_unique_classes": int(y.nunique()), "min_class_count": int(_vc.min()), "max_class_count": int(_vc.max()), "rare_classes_lt_2": _rare_classes, "expected_classes": CLASS_LABELS, "actual_unique": sorted(y.unique().tolist())}, "timestamp": int(datetime.now().timestamp() * 1000), "sessionId": "debug-session", "runId": "run1"}
+    with open(_log_path, "a") as _f: _f.write(_json.dumps(_debug_data3) + "\n")
+    # #endregion
+
     X_train, X_test, y_train, y_test = train_test_split(
         X, y,
         test_size=args.test_size,
