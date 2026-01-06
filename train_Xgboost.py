@@ -6,16 +6,17 @@ Predicts QteConso as a continuous value (0-3), then rounds/clips for classificat
 This approach avoids stratification issues with rare classes.
 
 Usage:
-    python train_Xgboost.py --data-path df_ml2.csv --test-size 0.2
+    python train_Xgboost.py --data-path data/DF_ML_M1.csv --test-size 0.2
 
 Example nohup command for GCP c2d-standard-32 VM:
-    nohup python3 train_Xgboost.py --data-path df_ml2.csv > train.log 2>&1 &
+    nohup python3 train_Xgboost.py --data-path data/DF_ML_M1.csv > train.log 2>&1 &
 
 Dependencies:
     pip install pandas numpy scikit-learn xgboost
 """
 
 import argparse
+import gc
 import json
 import logging
 import os
@@ -28,7 +29,7 @@ from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import OneHotEncoder
+from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.metrics import accuracy_score, confusion_matrix, mean_squared_error, mean_absolute_error
 import xgboost as xgb
 
@@ -91,7 +92,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--data-path",
         type=str,
-        default="df_ml2.csv",
+        default="data/DF_ML_M1.csv",
         help="Path to the input CSV file",
     )
     parser.add_argument(
@@ -144,57 +145,86 @@ def prepare_features_target(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series]:
     return X, y
 
 
-def build_preprocessor(X: pd.DataFrame) -> tuple[ColumnTransformer, list[str]]:
-    """Build preprocessing pipeline for numeric and categorical columns."""
-    # Identify column types
-    numeric_cols = X.select_dtypes(include=[np.number]).columns.tolist()
-    categorical_cols = X.select_dtypes(exclude=[np.number]).columns.tolist()
+class MemoryEfficientPreprocessor:
+    """
+    Memory-efficient preprocessor using Label Encoding instead of One-Hot Encoding.
+    This prevents memory explosion with high-cardinality categorical columns.
+    """
 
-    logger.info(f"Numeric columns ({len(numeric_cols)}): {numeric_cols[:10]}{'...' if len(numeric_cols) > 10 else ''}")
-    logger.info(f"Categorical columns ({len(categorical_cols)}): {categorical_cols[:10]}{'...' if len(categorical_cols) > 10 else ''}")
+    def __init__(self):
+        self.numeric_cols = []
+        self.categorical_cols = []
+        self.label_encoders = {}
+        self.numeric_imputer = SimpleImputer(strategy="median")
+        self.scaler = StandardScaler()
 
-    # Numeric pipeline: median imputation
-    numeric_transformer = Pipeline(steps=[
-        ("imputer", SimpleImputer(strategy="median")),
-    ])
+    def fit(self, X: pd.DataFrame) -> "MemoryEfficientPreprocessor":
+        """Fit the preprocessor on training data."""
+        # Identify column types
+        self.numeric_cols = X.select_dtypes(include=[np.number]).columns.tolist()
+        self.categorical_cols = X.select_dtypes(exclude=[np.number]).columns.tolist()
 
-    # Categorical pipeline: most frequent imputation + one-hot encoding
-    categorical_transformer = Pipeline(steps=[
-        ("imputer", SimpleImputer(strategy="most_frequent")),
-        ("onehot", OneHotEncoder(handle_unknown="ignore", sparse_output=False)),
-    ])
+        logger.info(f"Numeric columns ({len(self.numeric_cols)}): {self.numeric_cols[:10]}{'...' if len(self.numeric_cols) > 10 else ''}")
+        logger.info(f"Categorical columns ({len(self.categorical_cols)}): {self.categorical_cols[:10]}{'...' if len(self.categorical_cols) > 10 else ''}")
 
-    # Combine transformers
-    preprocessor = ColumnTransformer(
-        transformers=[
-            ("num", numeric_transformer, numeric_cols),
-            ("cat", categorical_transformer, categorical_cols),
-        ],
-        remainder="drop",
-    )
+        # Fit numeric imputer and scaler
+        if self.numeric_cols:
+            numeric_data = X[self.numeric_cols].values
+            numeric_data = self.numeric_imputer.fit_transform(numeric_data)
+            self.scaler.fit(numeric_data)
 
-    return preprocessor, numeric_cols, categorical_cols
+        # Fit label encoders for each categorical column
+        for col in self.categorical_cols:
+            le = LabelEncoder()
+            # Handle missing values by treating them as a category
+            col_data = X[col].fillna("__MISSING__").astype(str)
+            le.fit(col_data)
+            self.label_encoders[col] = le
+
+        return self
+
+    def transform(self, X: pd.DataFrame) -> np.ndarray:
+        """Transform data using fitted preprocessor."""
+        result_arrays = []
+
+        # Process numeric columns: impute + normalize
+        if self.numeric_cols:
+            numeric_data = X[self.numeric_cols].values
+            numeric_data = self.numeric_imputer.transform(numeric_data)
+            numeric_data = self.scaler.transform(numeric_data)
+            result_arrays.append(numeric_data)
+
+        # Process categorical columns: label encode
+        if self.categorical_cols:
+            cat_encoded = np.zeros((len(X), len(self.categorical_cols)), dtype=np.float32)
+            for i, col in enumerate(self.categorical_cols):
+                col_data = X[col].fillna("__MISSING__").astype(str)
+                le = self.label_encoders[col]
+                # Handle unseen categories by assigning -1
+                encoded = np.array([
+                    le.transform([val])[0] if val in le.classes_ else -1
+                    for val in col_data
+                ], dtype=np.float32)
+                cat_encoded[:, i] = encoded
+            result_arrays.append(cat_encoded)
+
+        return np.hstack(result_arrays).astype(np.float32)
+
+    def fit_transform(self, X: pd.DataFrame) -> np.ndarray:
+        """Fit and transform in one step."""
+        self.fit(X)
+        return self.transform(X)
+
+    def get_feature_names(self) -> list[str]:
+        """Get feature names after preprocessing."""
+        feature_names = [sanitize_feature_name(col) for col in self.numeric_cols]
+        feature_names.extend([sanitize_feature_name(col) for col in self.categorical_cols])
+        return feature_names
 
 
 def sanitize_feature_name(name: str) -> str:
     """Sanitize feature name for XGBoost compatibility (no [, ], or <)."""
     return name.replace("[", "_").replace("]", "_").replace("<", "_").replace(">", "_")
-
-
-def get_feature_names(preprocessor: ColumnTransformer, numeric_cols: list, categorical_cols: list) -> list[str]:
-    """Extract feature names after preprocessing."""
-    feature_names = [sanitize_feature_name(col) for col in numeric_cols]
-
-    # Get one-hot encoded feature names if categorical columns exist
-    if categorical_cols:
-        cat_transformer = preprocessor.named_transformers_.get("cat")
-        if cat_transformer is not None:
-            onehot = cat_transformer.named_steps["onehot"]
-            cat_feature_names = onehot.get_feature_names_out(categorical_cols).tolist()
-            # Sanitize categorical feature names
-            feature_names.extend([sanitize_feature_name(name) for name in cat_feature_names])
-
-    return feature_names
 
 
 def compute_per_class_accuracy(y_true: np.ndarray, y_pred: np.ndarray, labels: list) -> dict:
@@ -285,10 +315,6 @@ def main() -> None:
     # Prepare features and target
     X, y = prepare_features_target(df)
 
-    # Build preprocessor
-    logger.info("Building preprocessing pipeline...")
-    preprocessor, numeric_cols, categorical_cols = build_preprocessor(X)
-
     # Split data with stratification
     logger.info(f"Splitting data (test_size={args.test_size}, stratified)...")
     
@@ -312,14 +338,24 @@ def main() -> None:
     logger.info(f"Training set size: {len(X_train)}")
     logger.info(f"Test set size: {len(X_test)}")
 
-    # Fit preprocessor and transform data
+    # Build and fit memory-efficient preprocessor (Label Encoding + StandardScaler)
+    logger.info("Building memory-efficient preprocessing pipeline...")
+    logger.info("Using Label Encoding (not One-Hot) to prevent memory explosion")
+    preprocessor = MemoryEfficientPreprocessor()
+    
     logger.info("Fitting preprocessor on training data...")
     X_train_processed = preprocessor.fit_transform(X_train)
     X_test_processed = preprocessor.transform(X_test)
 
     # Get feature names
-    feature_names = get_feature_names(preprocessor, numeric_cols, categorical_cols)
+    feature_names = preprocessor.get_feature_names()
     logger.info(f"Total features after preprocessing: {len(feature_names)}")
+    logger.info(f"Memory usage - X_train: {X_train_processed.nbytes / 1e9:.2f} GB")
+
+    # Free up memory from raw DataFrames
+    del X_train, X_test, X, df
+    gc.collect()
+    logger.info("Freed memory from raw DataFrames")
 
     # Convert to DataFrame with proper column names for XGBoost
     X_train_processed = pd.DataFrame(X_train_processed, columns=feature_names)
