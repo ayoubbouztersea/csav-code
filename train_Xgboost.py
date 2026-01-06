@@ -176,9 +176,14 @@ def build_preprocessor(X: pd.DataFrame) -> tuple[ColumnTransformer, list[str]]:
     return preprocessor, numeric_cols, categorical_cols
 
 
+def sanitize_feature_name(name: str) -> str:
+    """Sanitize feature name for XGBoost compatibility (no [, ], or <)."""
+    return name.replace("[", "_").replace("]", "_").replace("<", "_").replace(">", "_")
+
+
 def get_feature_names(preprocessor: ColumnTransformer, numeric_cols: list, categorical_cols: list) -> list[str]:
     """Extract feature names after preprocessing."""
-    feature_names = numeric_cols.copy()
+    feature_names = [sanitize_feature_name(col) for col in numeric_cols]
 
     # Get one-hot encoded feature names if categorical columns exist
     if categorical_cols:
@@ -186,7 +191,8 @@ def get_feature_names(preprocessor: ColumnTransformer, numeric_cols: list, categ
         if cat_transformer is not None:
             onehot = cat_transformer.named_steps["onehot"]
             cat_feature_names = onehot.get_feature_names_out(categorical_cols).tolist()
-            feature_names.extend(cat_feature_names)
+            # Sanitize categorical feature names
+            feature_names.extend([sanitize_feature_name(name) for name in cat_feature_names])
 
     return feature_names
 
