@@ -29,7 +29,14 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score, confusion_matrix, classification_report
+from sklearn.metrics import (
+    accuracy_score,
+    confusion_matrix,
+    classification_report,
+    precision_score,
+    recall_score,
+    f1_score,
+)
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler
 import lightgbm as lgb
@@ -263,6 +270,42 @@ def compute_per_class_accuracy(y_true: np.ndarray, y_pred: np.ndarray, labels: l
     return per_class_acc, cm
 
 
+def compute_per_class_metrics(y_true: np.ndarray, y_pred: np.ndarray, labels: list) -> pd.DataFrame:
+    """
+    Compute detailed per-class metrics: accuracy, precision, recall, F1, support.
+    
+    Returns a DataFrame with one row per class.
+    """
+    cm = confusion_matrix(y_true, y_pred, labels=labels)
+    
+    # Per-class precision, recall, F1
+    precision_per_class = precision_score(y_true, y_pred, labels=labels, average=None, zero_division=0)
+    recall_per_class = recall_score(y_true, y_pred, labels=labels, average=None, zero_division=0)
+    f1_per_class = f1_score(y_true, y_pred, labels=labels, average=None, zero_division=0)
+    
+    metrics_list = []
+    for i, label in enumerate(labels):
+        true_count = cm[i, :].sum()  # Total actual samples for this class
+        pred_count = cm[:, i].sum()  # Total predicted as this class
+        correct = cm[i, i]           # Correctly predicted
+        
+        # Per-class accuracy (recall is the same as per-class accuracy)
+        accuracy = correct / true_count if true_count > 0 else 0.0
+        
+        metrics_list.append({
+            "class": label,
+            "support": int(true_count),
+            "predicted_count": int(pred_count),
+            "correct": int(correct),
+            "accuracy": accuracy,
+            "precision": precision_per_class[i],
+            "recall": recall_per_class[i],
+            "f1_score": f1_per_class[i],
+        })
+    
+    return pd.DataFrame(metrics_list)
+
+
 def save_metrics(
     overall_accuracy: float,
     per_class_accuracy: dict,
@@ -400,30 +443,78 @@ def main() -> None:
         y_test.values, y_pred, CLASS_LABELS
     )
 
+    # Compute detailed per-class metrics
+    per_class_metrics_df = compute_per_class_metrics(y_test.values, y_pred, CLASS_LABELS)
+
     # Print metrics
     logger.info("=" * 60)
     logger.info("EVALUATION RESULTS")
     logger.info("=" * 60)
     logger.info(f"Overall Accuracy: {overall_accuracy:.4f}")
-    for key, value in per_class_accuracy.items():
-        if value == "N/A":
-            logger.info(f"{key}: N/A (no samples)")
-        else:
-            logger.info(f"{key}: {value:.4f}")
 
-    logger.info("\nConfusion Matrix:")
-    logger.info(f"Rows: True labels, Columns: Predicted labels")
+    # =========================================================================
+    # DETAILED PER-CLASS EVALUATION (Classes 0, 1, 2, 3)
+    # =========================================================================
+    logger.info("\n" + "=" * 60)
+    logger.info("PER-CLASS EVALUATION (QteConso = 0, 1, 2, 3)")
+    logger.info("=" * 60)
+    
+    for _, row in per_class_metrics_df.iterrows():
+        cls = int(row["class"])
+        logger.info(f"\n{'─' * 40}")
+        logger.info(f"CLASS {cls} (QteConso = {cls})")
+        logger.info(f"{'─' * 40}")
+        logger.info(f"  Support (actual samples):    {row['support']:,}")
+        logger.info(f"  Predicted as class {cls}:      {row['predicted_count']:,}")
+        logger.info(f"  Correctly predicted:         {row['correct']:,}")
+        logger.info(f"  Accuracy (Recall):           {row['accuracy']:.4f} ({row['accuracy']*100:.2f}%)")
+        logger.info(f"  Precision:                   {row['precision']:.4f} ({row['precision']*100:.2f}%)")
+        logger.info(f"  Recall:                      {row['recall']:.4f} ({row['recall']*100:.2f}%)")
+        logger.info(f"  F1-Score:                    {row['f1_score']:.4f}")
+
+    # Summary table
+    logger.info("\n" + "=" * 60)
+    logger.info("PER-CLASS METRICS SUMMARY TABLE")
+    logger.info("=" * 60)
+    logger.info(f"\n{'Class':<8} {'Support':<10} {'Accuracy':<10} {'Precision':<10} {'Recall':<10} {'F1-Score':<10}")
+    logger.info("-" * 58)
+    for _, row in per_class_metrics_df.iterrows():
+        logger.info(
+            f"{int(row['class']):<8} {row['support']:<10,} {row['accuracy']:<10.4f} "
+            f"{row['precision']:<10.4f} {row['recall']:<10.4f} {row['f1_score']:<10.4f}"
+        )
+    logger.info("-" * 58)
+    
+    # Macro and weighted averages
+    macro_precision = precision_score(y_test, y_pred, labels=CLASS_LABELS, average="macro", zero_division=0)
+    macro_recall = recall_score(y_test, y_pred, labels=CLASS_LABELS, average="macro", zero_division=0)
+    macro_f1 = f1_score(y_test, y_pred, labels=CLASS_LABELS, average="macro", zero_division=0)
+    weighted_f1 = f1_score(y_test, y_pred, labels=CLASS_LABELS, average="weighted", zero_division=0)
+    
+    logger.info(f"{'Macro':<8} {'':<10} {overall_accuracy:<10.4f} {macro_precision:<10.4f} {macro_recall:<10.4f} {macro_f1:<10.4f}")
+    logger.info(f"{'Weighted':<8} {'':<10} {'':<10} {'':<10} {'':<10} {weighted_f1:<10.4f}")
+
+    logger.info("\n" + "=" * 60)
+    logger.info("CONFUSION MATRIX")
+    logger.info("=" * 60)
+    logger.info("Rows: True labels, Columns: Predicted labels")
     logger.info(f"Labels: {CLASS_LABELS}")
+    logger.info("")
+    # Print header
+    header = "True\\Pred " + " ".join([f"{l:>8}" for l in CLASS_LABELS])
+    logger.info(header)
+    logger.info("-" * len(header))
     for i, row in enumerate(confusion_mat):
-        logger.info(f"  Class {CLASS_LABELS[i]}: {row}")
-
-    # Print classification report
-    logger.info("\nClassification Report:")
-    logger.info("\n" + classification_report(y_test, y_pred, labels=CLASS_LABELS))
+        row_str = f"Class {CLASS_LABELS[i]}  " + " ".join([f"{val:>8,}" for val in row])
+        logger.info(row_str)
 
     # Save metrics
     logger.info("\nSaving metrics...")
     save_metrics(overall_accuracy, per_class_accuracy, confusion_mat)
+    
+    # Save detailed per-class metrics to CSV
+    per_class_metrics_df.to_csv("per_class_metrics_lgbm.csv", index=False)
+    logger.info("Per-class metrics saved to: per_class_metrics_lgbm.csv")
 
     # Save model
     model_path = "model_qteconso_lgbm.txt"
@@ -453,6 +544,7 @@ def main() -> None:
     logger.info(f"Total runtime: {total_duration}")
     logger.info(f"Model saved to: {model_path}")
     logger.info(f"Metrics saved to: metrics_lgbm.json, metrics_lgbm.csv")
+    logger.info(f"Per-class metrics saved to: per_class_metrics_lgbm.csv")
     logger.info(f"Confusion matrix saved to: confusion_matrix_lgbm.csv")
     logger.info(f"Feature importance saved to: feature_importance_lgbm.csv")
     logger.info("=" * 60)
