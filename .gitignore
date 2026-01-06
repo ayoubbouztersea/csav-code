@@ -11,4 +11,5 @@
 ./utils/
 ./scripts/
 ./src/
-./venv/
+./venv/data/DF_ML_M1.csv
+data/*.csv
