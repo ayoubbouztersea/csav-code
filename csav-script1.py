@@ -49,10 +49,10 @@ CATEGORICAL_FEATURES = [
 ]
 
 CLASSIFIER_CHOICES = [
-    "sgd",
-    "logreg",
-    "linear_svc",
-    "passive_aggressive",
+    #"sgd",
+    #"logreg",
+    #"linear_svc",
+    #"passive_aggressive",
     "xgboost"
 
 ]
@@ -107,7 +107,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--classifier",
-        choices=CLASSIFIER_CHOICES + ["all"],
+        choices=["all"],
         default="sgd",
         help="Which classifier to train. Use 'all' to train and compare every available option.",
     )
