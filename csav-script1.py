@@ -33,7 +33,7 @@ DATA_DEFAULT = Path("notebooks/DF_ML_M1.csv")
 MODEL_DEFAULT = Path("models/article_count_classifier.joblib")
 METRICS_DEFAULT = Path("models/article_count_metrics.json")
 
-NUMERIC_FEATURES = ["Clot_1er_Pa", "NB_INTERV"]
+NUMERIC_FEATURES = []
 CATEGORICAL_FEATURES = [
     "Do",
     "s Code_Pdt",

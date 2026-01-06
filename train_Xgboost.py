@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """
-XGBoost classifier training script for QteConso prediction.
+XGBoost regressor training script for QteConso prediction.
+
+Predicts QteConso as a continuous value (0-3), then rounds/clips for classification metrics.
+This approach avoids stratification issues with rare classes.
 
 Usage:
     python train_Xgboost.py --data-path df_ml2.csv --test-size 0.2
@@ -26,8 +29,7 @@ from sklearn.impute import SimpleImputer
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder
-from sklearn.metrics import accuracy_score, confusion_matrix
-from sklearn.utils.class_weight import compute_sample_weight
+from sklearn.metrics import accuracy_score, confusion_matrix, mean_squared_error, mean_absolute_error
 import xgboost as xgb
 
 # ============================================================================
@@ -39,6 +41,7 @@ EXCLUDE_COLUMNS = ["LIBEL_ARTICLE", "LIBEL_ARTICLE_length"]
 CLASS_LABELS = [0, 1, 2, 3]
 
 # XGBoost configuration for CPU training on c2d-standard-32 (32 vCPU, 128 GB RAM)
+# Using regressor to predict values 0-3 continuously, then round for classification
 XGB_PARAMS = {
     "n_estimators": 500,
     "max_depth": 6,
@@ -46,10 +49,11 @@ XGB_PARAMS = {
     "subsample": 0.9,
     "colsample_bytree": 0.9,
     "n_jobs": 32,
-    "eval_metric": "mlogloss",
+    "eval_metric": "rmse",  # Regression metric
     "random_state": RANDOM_STATE,
     "verbosity": 1,
     "tree_method": "hist",  # Efficient for CPU
+    "objective": "reg:squarederror",  # Regression objective
 }
 
 # ============================================================================
@@ -180,21 +184,6 @@ def get_feature_names(preprocessor: ColumnTransformer, numeric_cols: list, categ
     return feature_names
 
 
-def compute_class_weights(y: pd.Series) -> np.ndarray:
-    """Compute sample weights to handle class imbalance."""
-    sample_weights = compute_sample_weight(class_weight="balanced", y=y)
-    logger.info("Sample weights computed for class balancing")
-
-    # Log class distribution and weights
-    unique_classes = np.unique(y)
-    for cls in unique_classes:
-        mask = y == cls
-        avg_weight = sample_weights[mask].mean()
-        logger.info(f"  Class {cls}: count={mask.sum()}, avg_weight={avg_weight:.4f}")
-
-    return sample_weights
-
-
 def compute_per_class_accuracy(y_true: np.ndarray, y_pred: np.ndarray, labels: list) -> dict:
     """Compute per-class accuracy from confusion matrix."""
     cm = confusion_matrix(y_true, y_pred, labels=labels)
@@ -214,11 +203,15 @@ def save_metrics(
     overall_accuracy: float,
     per_class_accuracy: dict,
     confusion_mat: np.ndarray,
+    rmse: float,
+    mae: float,
     output_prefix: str = "metrics",
 ) -> None:
     """Save metrics to JSON and CSV files."""
     # Prepare metrics dictionary
     metrics = {
+        "rmse": rmse,
+        "mae": mae,
         "overall_accuracy": overall_accuracy,
         **per_class_accuracy,
         "confusion_matrix": confusion_mat.tolist(),
@@ -235,6 +228,8 @@ def save_metrics(
 
     # Save to CSV (flat format)
     csv_metrics = {
+        "rmse": [rmse],
+        "mae": [mae],
         "overall_accuracy": [overall_accuracy],
     }
     for key, value in per_class_accuracy.items():
@@ -281,23 +276,12 @@ def main() -> None:
     logger.info("Building preprocessing pipeline...")
     preprocessor, numeric_cols, categorical_cols = build_preprocessor(X)
 
-    # Split data with stratification
-    logger.info(f"Splitting data (test_size={args.test_size}, stratified)...")
-
-    # #region agent log H1,H4,H5
-    import json as _json
-    _log_path = "/Users/ayoubbouz/Documents/DS_Projects/csav-code/.cursor/debug.log"
-    _vc = y.value_counts()
-    _rare_classes = [(int(k), int(v)) for k, v in _vc.items() if v < 2]
-    _debug_data3 = {"hypothesisId": "H1,H4,H5", "location": "train_Xgboost.py:before_split", "message": "Pre-split analysis", "data": {"total_samples": len(y), "num_unique_classes": int(y.nunique()), "min_class_count": int(_vc.min()), "max_class_count": int(_vc.max()), "rare_classes_lt_2": _rare_classes, "expected_classes": CLASS_LABELS, "actual_unique": sorted(y.unique().tolist())}, "timestamp": int(datetime.now().timestamp() * 1000), "sessionId": "debug-session", "runId": "run1"}
-    with open(_log_path, "a") as _f: _f.write(_json.dumps(_debug_data3) + "\n")
-    # #endregion
-
+    # Split data (no stratification - using regression approach)
+    logger.info(f"Splitting data (test_size={args.test_size})...")
     X_train, X_test, y_train, y_test = train_test_split(
         X, y,
         test_size=args.test_size,
         random_state=RANDOM_STATE,
-        stratify=y,
     )
     logger.info(f"Training set size: {len(X_train)}")
     logger.info(f"Test set size: {len(X_test)}")
@@ -315,18 +299,10 @@ def main() -> None:
     X_train_processed = pd.DataFrame(X_train_processed, columns=feature_names)
     X_test_processed = pd.DataFrame(X_test_processed, columns=feature_names)
 
-    # Compute sample weights for class balancing
-    logger.info("Computing sample weights for class balancing...")
-    sample_weights = compute_class_weights(y_train)
-
-    # Initialize XGBoost classifier
-    logger.info("Initializing XGBoost classifier...")
+    # Initialize XGBoost regressor
+    logger.info("Initializing XGBoost regressor...")
     logger.info(f"XGBoost parameters: {XGB_PARAMS}")
-    model = xgb.XGBClassifier(
-        **XGB_PARAMS,
-        objective="multi:softprob",
-        num_class=len(CLASS_LABELS),
-    )
+    model = xgb.XGBRegressor(**XGB_PARAMS)
 
     # Train model
     logger.info("Starting model training...")
@@ -334,19 +310,29 @@ def main() -> None:
     model.fit(
         X_train_processed,
         y_train,
-        sample_weight=sample_weights,
         eval_set=[(X_test_processed, y_test)],
         verbose=True,
     )
     train_duration = datetime.now() - train_start
     logger.info(f"Training completed in {train_duration}")
 
-    # Make predictions
+    # Make predictions (regression output)
     logger.info("Making predictions on test set...")
-    y_pred = model.predict(X_test_processed)
+    y_pred_raw = model.predict(X_test_processed)
+
+    # Round and clip predictions to valid class range [0, 3]
+    y_pred = np.clip(np.round(y_pred_raw), 0, 3).astype(int)
+    logger.info(f"Raw predictions range: [{y_pred_raw.min():.3f}, {y_pred_raw.max():.3f}]")
+    logger.info(f"Rounded predictions distribution: {pd.Series(y_pred).value_counts().sort_index().to_dict()}")
 
     # Compute metrics
     logger.info("Computing evaluation metrics...")
+
+    # Regression metrics (on raw predictions)
+    rmse = np.sqrt(mean_squared_error(y_test, y_pred_raw))
+    mae = mean_absolute_error(y_test, y_pred_raw)
+
+    # Classification metrics (on rounded predictions)
     overall_accuracy = accuracy_score(y_test, y_pred)
     per_class_accuracy, confusion_mat = compute_per_class_accuracy(
         y_test.values, y_pred, CLASS_LABELS
@@ -356,7 +342,9 @@ def main() -> None:
     logger.info("=" * 60)
     logger.info("EVALUATION RESULTS")
     logger.info("=" * 60)
-    logger.info(f"Overall Accuracy: {overall_accuracy:.4f}")
+    logger.info(f"RMSE (raw): {rmse:.4f}")
+    logger.info(f"MAE (raw): {mae:.4f}")
+    logger.info(f"Overall Accuracy (rounded): {overall_accuracy:.4f}")
     for key, value in per_class_accuracy.items():
         if value == "N/A":
             logger.info(f"{key}: N/A (no samples)")
@@ -371,7 +359,7 @@ def main() -> None:
 
     # Save metrics
     logger.info("\nSaving metrics...")
-    save_metrics(overall_accuracy, per_class_accuracy, confusion_mat)
+    save_metrics(overall_accuracy, per_class_accuracy, confusion_mat, rmse, mae)
 
     # Save model
     model_path = "model_qteconso.xgb"
