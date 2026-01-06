@@ -199,8 +199,8 @@ class LightGBMMultiLabelClassifier:
         stratify_key = None
         if labels_list is not None:
             # Create stratification key from label combinations
-            # Use sorted tuple string to group identical label sets
-            stratify_key = [tuple(sorted(labels)) for labels in labels_list]
+            # Convert to string to ensure homogeneous array (tuples of different lengths cause errors)
+            stratify_key = ['|'.join(sorted(labels)) for labels in labels_list]
             
             # Handle rare combinations by grouping them to avoid stratification errors
             from collections import Counter
@@ -209,7 +209,7 @@ class LightGBMMultiLabelClassifier:
             
             # Replace rare combinations with a generic key
             stratify_key = [
-                combo if combo_counts[combo] >= min_samples else ('__RARE__',)
+                combo if combo_counts[combo] >= min_samples else '__RARE__'
                 for combo in stratify_key
             ]
             logger.info(f"Stratifying on {len(set(stratify_key))} unique label combinations")
