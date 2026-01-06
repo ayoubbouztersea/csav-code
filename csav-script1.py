@@ -107,7 +107,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--classifier",
-        choices=["all"],
+        choices=CLASSIFIER_CHOICES + ["all"],
         default="sgd",
         help="Which classifier to train. Use 'all' to train and compare every available option.",
     )
