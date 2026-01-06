@@ -86,7 +86,7 @@ def set_seeds(seed: int = 42) -> None:
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
-        description="Train XGBoost classifier for QteConso prediction",
+        description="Train XGBoost classifier for QteConso prediction (0,1,2,3)",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
