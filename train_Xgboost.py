@@ -42,6 +42,7 @@ EXCLUDE_COLUMNS = [
     "LIBEL_ARTICLE",
     "LIBEL_ARTICLE_length",
     "LIBEL_ARTICLE_Length",  # Case variant
+    "len_LIBEL_ARTICLE",
     "Dossier",
     "NB_INTERV",
     "Clot_1er_Pa",
