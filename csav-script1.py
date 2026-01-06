@@ -49,10 +49,10 @@ CATEGORICAL_FEATURES = [
 ]
 
 CLASSIFIER_CHOICES = [
-    #"sgd",
-    #"logreg",
-    #"linear_svc",
-    #"passive_aggressive",
+    "sgd",
+    "logreg",
+    "linear_svc",
+    "passive_aggressive",
     "xgboost"
 
 ]
