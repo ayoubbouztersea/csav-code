@@ -37,7 +37,14 @@ import xgboost as xgb
 # ============================================================================
 RANDOM_STATE = 42
 TARGET_COLUMN = "QteConso"
-EXCLUDE_COLUMNS = ["LIBEL_ARTICLE", "LIBEL_ARTICLE_length"]
+EXCLUDE_COLUMNS = [
+    "LIBEL_ARTICLE",
+    "LIBEL_ARTICLE_length",
+    "LIBEL_ARTICLE_Length",  # Case variant
+    "Dossier",
+    "NB_INTERV",
+    "Clot_1er_Pa",
+]
 CLASS_LABELS = [0, 1, 2, 3]
 
 # XGBoost configuration for CPU training on c2d-standard-32 (32 vCPU, 128 GB RAM)
