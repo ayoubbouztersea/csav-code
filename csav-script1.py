@@ -29,6 +29,11 @@ except ImportError:  # pragma: no cover - optional dependency
     HAS_XGBOOST = False
 
 
+def log(msg: str) -> None:
+    """Print message and flush immediately for nohup compatibility."""
+    print(msg, flush=True)
+
+
 DATA_DEFAULT = Path("data/DF_ML_M1.csv")
 MODEL_DEFAULT = Path("models/article_count_classifier.joblib")
 METRICS_DEFAULT = Path("models/article_count_metrics.json")
@@ -304,16 +309,46 @@ def make_classifier(name: str, args: argparse.Namespace) -> Tuple[object, bool]:
     raise ValueError(f"Unknown classifier requested: {name}")
 
 
+def export_accuracy_csv(metrics_by_classifier: Dict[str, dict], output_dir: Path) -> None:
+    """Export per-class accuracy metrics for SGD and XGBoost to CSV files."""
+    classifiers_to_export = ["sgd", "xgboost"]
+    
+    for clf_name in classifiers_to_export:
+        if clf_name not in metrics_by_classifier:
+            continue
+        
+        report = metrics_by_classifier[clf_name].get("classification_report", {})
+        
+        # Build per-class metrics DataFrame
+        rows = []
+        for label in ARTICLE_COUNT_LABELS:
+            label_str = str(label)
+            if label_str in report:
+                rows.append({
+                    "class": label,
+                    "precision": report[label_str].get("precision", 0.0),
+                    "recall": report[label_str].get("recall", 0.0),
+                    "f1-score": report[label_str].get("f1-score", 0.0),
+                    "support": report[label_str].get("support", 0),
+                })
+        
+        if rows:
+            df = pd.DataFrame(rows).set_index("class")
+            csv_path = output_dir / f"accuracy_{clf_name}.csv"
+            df.to_csv(csv_path)
+            log(f"Exported per-class accuracy for '{clf_name}' to {csv_path}")
+
+
 def main() -> None:
     args = parse_args()
 
-    print(f"Loading data from {args.data_path} ...")
+    log(f"Loading data from {args.data_path} ...")
     raw_df = load_raw_data(args.data_path)
 
     X, y = build_dataset(raw_df)
-    print(
-        f"Target distribution (after clipping >= {MAX_ARTICLE_COUNT} to {MAX_ARTICLE_COUNT}):",
-        y.value_counts().sort_index().to_dict(),
+    log(
+        f"Target distribution (after clipping >= {MAX_ARTICLE_COUNT} to {MAX_ARTICLE_COUNT}): "
+        f"{y.value_counts().sort_index().to_dict()}"
     )
 
     X_train, X_test, y_train, y_test = train_test_split(
@@ -329,7 +364,7 @@ def main() -> None:
     test_df[TARGET_COLUMN] = y_test
     test_df_path = Path("test_df_count_model.csv")
     test_df.to_csv(test_df_path)
-    print(f"\nExported test dataset to {test_df_path} ({len(test_df)} rows)")
+    log(f"\nExported test dataset to {test_df_path} ({len(test_df)} rows)")
 
     classifier_names = CLASSIFIER_CHOICES if args.classifier == "all" else [args.classifier]
     metrics_by_classifier: Dict[str, dict] = {}
@@ -338,20 +373,20 @@ def main() -> None:
     best_score = float("-inf")
 
     for name in classifier_names:
-        print(f"\nFitting classifier '{name}' ...")
+        log(f"\nFitting classifier '{name}' ...")
         estimator, requires_dense = make_classifier(name, args)
         pipeline = build_model(estimator, requires_dense=requires_dense)
         pipeline.fit(X_train, y_train)
 
-        print(f"Evaluating '{name}' on hold-out set ...")
+        log(f"Evaluating '{name}' on hold-out set ...")
         metrics = evaluate_model(pipeline, X_test, y_test)
         metrics["classifier"] = name
         metrics_by_classifier[name] = metrics
-        print(json.dumps({k: v for k, v in metrics.items() if k not in {"classification_report", "confusion_matrix"}}, indent=2))
-        print("Classification report:")
-        print(classification_report(y_test, pipeline.predict(X_test), digits=3))
-        print("Confusion matrix (rows=true, cols=pred):")
-        print(pd.DataFrame(metrics["confusion_matrix"], index=metrics["labels"], columns=metrics["labels"]))
+        log(json.dumps({k: v for k, v in metrics.items() if k not in {"classification_report", "confusion_matrix"}}, indent=2))
+        log("Classification report:")
+        log(classification_report(y_test, pipeline.predict(X_test), digits=3))
+        log("Confusion matrix (rows=true, cols=pred):")
+        log(str(pd.DataFrame(metrics["confusion_matrix"], index=metrics["labels"], columns=metrics["labels"])))
 
         if len(classifier_names) == 1:
             model_path = args.model_path
@@ -361,12 +396,17 @@ def main() -> None:
         model_path.parent.mkdir(parents=True, exist_ok=True)
         joblib.dump(pipeline, model_path)
         model_paths[name] = str(model_path)
-        print(f"Saved trained pipeline for '{name}' to {model_path}")
+        log(f"Saved trained pipeline for '{name}' to {model_path}")
 
         score = metrics["balanced_accuracy"]
         if score > best_score:
             best_score = score
             best_name = name
+
+    # Export per-class accuracy CSV for SGD and XGBoost
+    output_dir = args.model_path.parent
+    output_dir.mkdir(parents=True, exist_ok=True)
+    export_accuracy_csv(metrics_by_classifier, output_dir)
 
     if args.metrics_path:
         args.metrics_path.parent.mkdir(parents=True, exist_ok=True)
@@ -381,10 +421,10 @@ def main() -> None:
                     "model_paths": model_paths,
                 }
                 json.dump(payload, fh, indent=2)
-        print(f"\nStored metrics at {args.metrics_path}")
+        log(f"\nStored metrics at {args.metrics_path}")
 
     if len(classifier_names) > 1:
-        print(f"\nBest classifier based on balanced accuracy: '{best_name}' ({best_score:.4f})")
+        log(f"\nBest classifier based on balanced accuracy: '{best_name}' ({best_score:.4f})")
 
 
 if __name__ == "__main__":
