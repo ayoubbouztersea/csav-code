@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """
-LightGBM classifier training script for QteConso prediction (0, 1, 2, 3).
+LightGBM regressor training script for QteConso prediction (0, 1, 2, 3).
+
+Predicts QteConso as a continuous value, then rounds/clips for classification metrics.
+This approach respects the ordinal nature of the target (0 < 1 < 2 < 3).
 
 LightGBM advantages over XGBoost:
 - Native categorical feature support (no encoding needed)
 - Lower memory usage (histogram-based algorithm)
 - Faster training on large datasets
-- Built-in class balancing
 
 Usage:
     python train_LightGBM.py --data-path data/DF_ML_M1.csv --test-size 0.2
@@ -36,6 +38,8 @@ from sklearn.metrics import (
     precision_score,
     recall_score,
     f1_score,
+    mean_squared_error,
+    mean_absolute_error,
 )
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler
@@ -58,6 +62,7 @@ EXCLUDE_COLUMNS = [
 CLASS_LABELS = [0, 1, 2, 3]
 
 # LightGBM configuration for CPU training on c2d-standard-32 (32 vCPU, 128 GB RAM)
+# Using regressor to predict values 0-3 continuously, then round for classification
 LGBM_PARAMS = {
     "n_estimators": 500,
     "max_depth": 8,
@@ -66,7 +71,6 @@ LGBM_PARAMS = {
     "min_child_samples": 20,
     "subsample": 0.9,
     "colsample_bytree": 0.9,
-    "class_weight": "balanced",  # Handle class imbalance
     "n_jobs": 32,
     "random_state": RANDOM_STATE,
     "verbose": 1,
@@ -95,7 +99,7 @@ def set_seeds(seed: int = 42) -> None:
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
-        description="Train LightGBM classifier for QteConso prediction (0,1,2,3)",
+        description="Train LightGBM regressor for QteConso prediction (0,1,2,3)",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
@@ -310,11 +314,15 @@ def save_metrics(
     overall_accuracy: float,
     per_class_accuracy: dict,
     confusion_mat: np.ndarray,
+    rmse: float,
+    mae: float,
     output_prefix: str = "metrics_lgbm",
 ) -> None:
     """Save metrics to JSON and CSV files."""
     # Prepare metrics dictionary
     metrics = {
+        "rmse": rmse,
+        "mae": mae,
         "overall_accuracy": overall_accuracy,
         **per_class_accuracy,
         "confusion_matrix": confusion_mat.tolist(),
@@ -331,6 +339,8 @@ def save_metrics(
 
     # Save to CSV (flat format)
     csv_metrics = {
+        "rmse": [rmse],
+        "mae": [mae],
         "overall_accuracy": [overall_accuracy],
     }
     for key, value in per_class_accuracy.items():
@@ -355,7 +365,7 @@ def main() -> None:
     """Main training pipeline."""
     start_time = datetime.now()
     logger.info("=" * 60)
-    logger.info("LightGBM Training Script for QteConso Classification")
+    logger.info("LightGBM Regressor Training Script for QteConso Prediction")
     logger.info("=" * 60)
 
     # Parse arguments
@@ -412,10 +422,10 @@ def main() -> None:
     # Get categorical feature names for LightGBM
     cat_feature_names = categorical_cols if categorical_cols else "auto"
 
-    # Initialize LightGBM classifier
-    logger.info("Initializing LightGBM classifier...")
+    # Initialize LightGBM regressor
+    logger.info("Initializing LightGBM regressor...")
     logger.info(f"LightGBM parameters: {LGBM_PARAMS}")
-    model = lgb.LGBMClassifier(**LGBM_PARAMS)
+    model = lgb.LGBMRegressor(**LGBM_PARAMS)
 
     # Train model
     logger.info("Starting model training...")
@@ -425,19 +435,30 @@ def main() -> None:
         X_train,
         y_train,
         eval_set=[(X_test, y_test)],
-        eval_metric="multi_logloss",
+        eval_metric="rmse",
         categorical_feature=cat_feature_names,
     )
     
     train_duration = datetime.now() - train_start
     logger.info(f"Training completed in {train_duration}")
 
-    # Make predictions
+    # Make predictions (regression output)
     logger.info("Making predictions on test set...")
-    y_pred = model.predict(X_test)
+    y_pred_raw = model.predict(X_test)
+
+    # Round and clip predictions to valid class range [0, 3]
+    y_pred = np.clip(np.round(y_pred_raw), 0, 3).astype(int)
+    logger.info(f"Raw predictions range: [{y_pred_raw.min():.3f}, {y_pred_raw.max():.3f}]")
+    logger.info(f"Rounded predictions distribution: {pd.Series(y_pred).value_counts().sort_index().to_dict()}")
 
     # Compute metrics
     logger.info("Computing evaluation metrics...")
+
+    # Regression metrics (on raw predictions)
+    rmse = np.sqrt(mean_squared_error(y_test, y_pred_raw))
+    mae = mean_absolute_error(y_test, y_pred_raw)
+
+    # Classification metrics (on rounded predictions)
     overall_accuracy = accuracy_score(y_test, y_pred)
     per_class_accuracy, confusion_mat = compute_per_class_accuracy(
         y_test.values, y_pred, CLASS_LABELS
@@ -450,7 +471,9 @@ def main() -> None:
     logger.info("=" * 60)
     logger.info("EVALUATION RESULTS")
     logger.info("=" * 60)
-    logger.info(f"Overall Accuracy: {overall_accuracy:.4f}")
+    logger.info(f"RMSE (raw predictions): {rmse:.4f}")
+    logger.info(f"MAE (raw predictions): {mae:.4f}")
+    logger.info(f"Overall Accuracy (rounded): {overall_accuracy:.4f}")
 
     # =========================================================================
     # DETAILED PER-CLASS EVALUATION (Classes 0, 1, 2, 3)
@@ -510,7 +533,7 @@ def main() -> None:
 
     # Save metrics
     logger.info("\nSaving metrics...")
-    save_metrics(overall_accuracy, per_class_accuracy, confusion_mat)
+    save_metrics(overall_accuracy, per_class_accuracy, confusion_mat, rmse, mae)
     
     # Save detailed per-class metrics to CSV
     per_class_metrics_df.to_csv("per_class_metrics_lgbm.csv", index=False)
