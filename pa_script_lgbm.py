@@ -206,10 +206,10 @@ def main():
     script_dir = os.path.dirname(os.path.abspath(__file__))
     
     # Configuration
-    MODEL_PATH = os.path.join(script_dir, 'lightgbm_multilabel_model_V2_K2.joblib')
-    ENCODER_PATH = os.path.join(script_dir, 'label_encoder.joblib')
-    TEST_DATA_PATH = os.path.join(script_dir, 'test_df_prediag_auto.csv')
-    OUTPUT_PATH = os.path.join(script_dir, 'pa_cardinality_accuracy.csv')
+    MODEL_PATH = os.path.join(script_dir, './lightgbmV2/lightgbm_multilabel_model_V2_K2.joblib')
+    ENCODER_PATH = os.path.join(script_dir, './lightgbmV2/label_encoder.joblib')
+    TEST_DATA_PATH = os.path.join(script_dir, './data/test_df_prediag_auto.csv')
+    OUTPUT_PATH = os.path.join(script_dir, './lightgbmV2/pa_cardinality_accuracy.csv')
     
     # Check required files exist
     for path, name in [
