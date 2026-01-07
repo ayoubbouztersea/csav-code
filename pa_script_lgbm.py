@@ -55,6 +55,7 @@ def prepare_features(df):
     """
     Prepare feature columns for prediction.
     Must match the feature preparation from training.
+    Only uses categorical features (11 columns) to match the training data.
     
     Args:
         df: Input dataframe
@@ -67,14 +68,15 @@ def prepare_features(df):
     # Exclude non-feature columns
     exclude_cols = ['Dossier', 'LIBEL_ARTICLE', 'LIBEL_ARTICLE_Length']
     
-    # Get all columns except excluded ones
-    feature_cols = [col for col in df.columns if col not in exclude_cols]
+    # Get only categorical columns (object dtype) - these are the 11 features used in training
+    categorical_cols = [col for col in df.select_dtypes(include=['object']).columns 
+                        if col not in exclude_cols]
     
-    df_features = df[feature_cols].copy()
+    logger.info(f"Using categorical features only: {categorical_cols}")
+    
+    df_features = df[categorical_cols].copy()
     
     # Handle categorical columns with label encoding
-    categorical_cols = df_features.select_dtypes(include=['object']).columns
-    
     for col in categorical_cols:
         le = LabelEncoder()
         df_features[col] = le.fit_transform(df_features[col].astype(str))
