@@ -159,6 +159,7 @@ class LightGBMMultiLabelClassifier22K:
         """
         Prepare feature columns for training/inference.
         Handles both numeric and categorical features.
+        OPTIMIZED: Vectorized operations instead of row-by-row apply.
         
         Args:
             df (pd.DataFrame): Input dataframe
@@ -181,31 +182,28 @@ class LightGBMMultiLabelClassifier22K:
         df_features = df[feature_cols].copy()
         
         # Handle categorical columns with label encoding
-        categorical_cols = df_features.select_dtypes(include=['object']).columns
+        categorical_cols = df_features.select_dtypes(include=['object']).columns.tolist()
         
         for col in categorical_cols:
+            col_values = df_features[col].astype(str)
             if fit:
                 le = LabelEncoder()
-                df_features[col] = le.fit_transform(df_features[col].astype(str))
+                df_features[col] = le.fit_transform(col_values)
                 self.label_encoders[col] = le
             else:
                 le = self.label_encoders.get(col)
                 if le:
-                    # Handle unseen labels
-                    df_features[col] = df_features[col].astype(str).apply(
-                        lambda x: le.transform([x])[0] if x in le.classes_ else -1
-                    )
+                    # FAST: Create mapping dict and use vectorized map
+                    label_to_int = {label: idx for idx, label in enumerate(le.classes_)}
+                    df_features[col] = col_values.map(label_to_int).fillna(-1).astype(int)
                 else:
                     df_features[col] = -1
-        
-        # Downcast numerics to save memory
-        numeric_cols = df_features.select_dtypes(include=[np.number]).columns
-        df_features[numeric_cols] = df_features[numeric_cols].apply(
-            pd.to_numeric, errors='coerce', downcast='float'
-        )
 
-        # Fill any missing values after conversions
+        # Fill any missing values
         df_features = df_features.fillna(-1)
+        
+        # Convert to float32 for LightGBM (fast, single operation)
+        df_features = df_features.astype(np.float32)
         
         self.feature_columns = df_features.columns.tolist()
         logger.info(f"Features prepared. Number of features: {len(self.feature_columns)}")
