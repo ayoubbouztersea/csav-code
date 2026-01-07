@@ -13,3 +13,5 @@
 ./src/
 ./venv/data/DF_ML_M1.csv
 data/*.csv
+./test_export/
+./test_export/*
