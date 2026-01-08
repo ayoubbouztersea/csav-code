@@ -138,6 +138,10 @@ def prepare_features_and_target(df: pd.DataFrame, model: lgb.Booster) -> tuple[p
         logger.info(f"Excluding columns: {cols_to_drop}")
         df = df.drop(columns=cols_to_drop)
 
+    # Fix column names: replace spaces with underscores to match model features
+    df.columns = df.columns.str.replace(' ', '_')
+    logger.info("Column names normalized (spaces replaced with underscores)")
+
     # Get expected feature names from model
     model_features = model.feature_name()
     logger.info(f"Model expects {len(model_features)} features")
@@ -194,8 +198,11 @@ def preprocess_features(X: pd.DataFrame) -> pd.DataFrame:
         for col in categorical_cols:
             X[col] = X[col].fillna("__MISSING__")
             # Convert to category then extract integer codes
-            X[col] = pd.Categorical(X[col]).codes
+            X[col] = pd.Categorical(X[col]).codes.astype(float)
 
+    # Convert all columns to float to avoid any categorical dtype issues
+    X = X.astype(float)
+    
     return X
 
 
@@ -318,9 +325,10 @@ def main() -> None:
     # Preprocess features
     X = preprocess_features(X.copy())
 
-    # Make predictions
+    # Make predictions using numpy array to avoid pandas categorical issues
     logger.info("\nMaking predictions...")
-    y_prob = model.predict(X)  # Probability of class 1 (non-zero)
+    X_values = X.values  # Convert to numpy array
+    y_prob = model.predict(X_values)  # Probability of class 1 (non-zero)
     y_pred_binary = (y_prob >= 0.5).astype(int)
 
     logger.info(f"Predictions made for {len(y_pred_binary)} samples")
