@@ -286,6 +286,68 @@ def compute_accuracy_per_cardinality(
     return pd.DataFrame(rows)
 
 
+def compute_accuracy_binary_grouped(
+    y_original: np.ndarray,
+    y_pred_binary: np.ndarray,
+    y_prob: np.ndarray,
+) -> pd.DataFrame:
+    """
+    Compute accuracy for binary groups: 0 vs Non-0 (1, 2, 3 combined).
+    """
+    rows = []
+
+    # Group 0: Cardinality = 0
+    mask_zero = y_original == 0
+    count_zero = mask_zero.sum()
+    preds_zero = y_pred_binary[mask_zero]
+    probs_zero = y_prob[mask_zero]
+    correct_zero = (preds_zero == 0).sum()
+    accuracy_zero = (correct_zero / count_zero) * 100 if count_zero > 0 else 0
+
+    rows.append({
+        "Cardinality": "0",
+        "Sample Count": int(count_zero),
+        "Correct Predictions": int(correct_zero),
+        "Incorrect Predictions": int(count_zero - correct_zero),
+        "Accuracy (%)": round(accuracy_zero, 2),
+        "Avg Prob (Non-Zero)": round(probs_zero.mean(), 4) if count_zero > 0 else 0,
+    })
+
+    # Group Non-0: Cardinality = 1, 2, 3
+    mask_nonzero = y_original != 0
+    count_nonzero = mask_nonzero.sum()
+    preds_nonzero = y_pred_binary[mask_nonzero]
+    probs_nonzero = y_prob[mask_nonzero]
+    correct_nonzero = (preds_nonzero == 1).sum()
+    accuracy_nonzero = (correct_nonzero / count_nonzero) * 100 if count_nonzero > 0 else 0
+
+    rows.append({
+        "Cardinality": "Non-0 (1,2,3)",
+        "Sample Count": int(count_nonzero),
+        "Correct Predictions": int(correct_nonzero),
+        "Incorrect Predictions": int(count_nonzero - correct_nonzero),
+        "Accuracy (%)": round(accuracy_nonzero, 2),
+        "Avg Prob (Non-Zero)": round(probs_nonzero.mean(), 4) if count_nonzero > 0 else 0,
+    })
+
+    # Overall
+    total_samples = len(y_original)
+    expected_all = (y_original != 0).astype(int)
+    total_correct = (y_pred_binary == expected_all).sum()
+    overall_accuracy = (total_correct / total_samples) * 100
+
+    rows.append({
+        "Cardinality": "OVERALL",
+        "Sample Count": int(total_samples),
+        "Correct Predictions": int(total_correct),
+        "Incorrect Predictions": int(total_samples - total_correct),
+        "Accuracy (%)": round(overall_accuracy, 2),
+        "Avg Prob (Non-Zero)": round(y_prob.mean(), 4),
+    })
+
+    return pd.DataFrame(rows)
+
+
 def print_accuracy_table(accuracy_df: pd.DataFrame) -> None:
     """Print formatted accuracy table to console."""
     logger.info("\n" + "=" * 90)
@@ -335,7 +397,7 @@ def main() -> None:
     logger.info(f"Predicted 0: {(y_pred_binary == 0).sum()}")
     logger.info(f"Predicted Non-0: {(y_pred_binary == 1).sum()}")
 
-    # Compute accuracy per cardinality
+    # Compute accuracy per cardinality (0, 1, 2, 3)
     logger.info("\nComputing accuracy per cardinality...")
     accuracy_df = compute_accuracy_per_cardinality(
         y_original.values,
@@ -343,12 +405,30 @@ def main() -> None:
         y_prob,
     )
 
-    # Print accuracy table
+    # Compute binary grouped accuracy (0 vs Non-0)
+    accuracy_binary_df = compute_accuracy_binary_grouped(
+        y_original.values,
+        y_pred_binary,
+        y_prob,
+    )
+
+    # Print accuracy tables
     print_accuracy_table(accuracy_df)
+    
+    logger.info("\n" + "=" * 70)
+    logger.info("ACCURACY TABLE: 0 vs Non-0 (Binary Grouped)")
+    logger.info("=" * 70)
+    print("\n" + accuracy_binary_df.to_string(index=False))
+    logger.info("\n" + "=" * 70)
 
     # Save results
     accuracy_df.to_csv(args.output_path, index=False)
-    logger.info(f"\nAccuracy table saved to: {args.output_path}")
+    logger.info(f"\nAccuracy table (per cardinality) saved to: {args.output_path}")
+    
+    # Save binary grouped table
+    binary_output_path = args.output_path.replace(".csv", "_binary.csv")
+    accuracy_binary_df.to_csv(binary_output_path, index=False)
+    logger.info(f"Accuracy table (0 vs Non-0) saved to: {binary_output_path}")
 
     # Summary
     total_duration = datetime.now() - start_time
@@ -357,12 +437,10 @@ def main() -> None:
     logger.info("=" * 80)
     logger.info(f"Total runtime: {total_duration}")
 
-    # Print per-cardinality summary
-    for _, row in accuracy_df.iterrows():
-        if row["Cardinality"] != "OVERALL":
-            logger.info(f"Cardinality {row['Cardinality']}: {row['Accuracy (%)']}% accuracy ({row['Sample Count']} samples)")
-        else:
-            logger.info(f"Overall: {row['Accuracy (%)']}% accuracy ({row['Sample Count']} samples)")
+    # Print binary grouped summary
+    logger.info("Binary Grouped Results (0 vs Non-0):")
+    for _, row in accuracy_binary_df.iterrows():
+        logger.info(f"  {row['Cardinality']}: {row['Accuracy (%)']}% accuracy ({row['Sample Count']} samples)")
 
     logger.info("=" * 80)
 
