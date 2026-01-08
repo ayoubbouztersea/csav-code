@@ -168,6 +168,9 @@ def preprocess_features(X: pd.DataFrame) -> pd.DataFrame:
     
     Note: In production, you should save and load the fitted imputer/scaler
     from training. This is a simplified version.
+    
+    For LightGBM Booster prediction, categorical columns must be encoded as
+    integers (label encoding) rather than using pandas category dtype.
     """
     logger.info("Preprocessing features...")
 
@@ -185,10 +188,13 @@ def preprocess_features(X: pd.DataFrame) -> pd.DataFrame:
         X[numeric_cols] = imputer.fit_transform(X[numeric_cols])
         X[numeric_cols] = scaler.fit_transform(X[numeric_cols])
 
-    # Process categorical columns
+    # Process categorical columns - convert to integer codes (label encoding)
+    # LightGBM Booster expects numeric data, not pandas category dtype
     if categorical_cols:
         for col in categorical_cols:
-            X[col] = X[col].fillna("__MISSING__").astype("category")
+            X[col] = X[col].fillna("__MISSING__")
+            # Convert to category then extract integer codes
+            X[col] = pd.Categorical(X[col]).codes
 
     return X
 
