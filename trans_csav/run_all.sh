@@ -72,6 +72,21 @@ python evaluate.py \
 echo "Evaluation complete: $(date)"
 
 # =============================================================================
+# Step 4: Evaluation by Cardinality
+# =============================================================================
+echo ""
+echo "[Step 4/4] Evaluating by cardinality (1, 2, 3 pieces)..."
+echo "------------------------------------------------------------"
+python evaluate_by_cardinality.py \
+    --data-dir data \
+    --checkpoint checkpoints/best_model.pt \
+    --output accuracy_by_cardinality.csv \
+    --max-cardinality 3 \
+    --batch-size 128
+
+echo "Cardinality evaluation complete: $(date)"
+
+# =============================================================================
 # Summary
 # =============================================================================
 echo ""
@@ -81,9 +96,10 @@ echo "============================================================"
 echo "End time: $(date)"
 echo ""
 echo "Output files:"
-echo "  - data/                     (preprocessed data)"
-echo "  - checkpoints/best_model.pt (trained model)"
-echo "  - checkpoints/history.json  (training history)"
-echo "  - evaluation_results.json   (evaluation metrics)"
+echo "  - data/                       (preprocessed data)"
+echo "  - checkpoints/best_model.pt   (trained model)"
+echo "  - checkpoints/history.json    (training history)"
+echo "  - evaluation_results.json     (evaluation metrics)"
+echo "  - accuracy_by_cardinality.csv (accuracy per 1/2/3 pieces)"
 echo "============================================================"
 
