@@ -9,7 +9,7 @@
 set -e  # Exit on error
 
 # Project directory on VM (script runs from /m_data/trans_csav)
-PROJECT_DIR="/m_data/trans_csav"
+PROJECT_DIR="/m_data/csav-code/trans_csav"
 cd "$PROJECT_DIR"
 
 echo "============================================================"
