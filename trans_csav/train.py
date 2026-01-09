@@ -390,14 +390,14 @@ def train(
             f"Time: {epoch_time:.1f}s"
         )
         
-        # Update history
-        history["train_loss"].append(train_metrics["loss"])
-        history["val_loss"].append(val_metrics["loss"])
-        history["val_precision"].append(val_metrics["precision"])
-        history["val_recall"].append(val_metrics["recall"])
-        history["val_f1"].append(val_metrics["f1"])
-        history["val_exact_match"].append(val_metrics["exact_match"])
-        history["lr"].append(current_lr)
+        # Update history (convert numpy types to native Python for JSON serialization)
+        history["train_loss"].append(float(train_metrics["loss"]))
+        history["val_loss"].append(float(val_metrics["loss"]))
+        history["val_precision"].append(float(val_metrics["precision"]))
+        history["val_recall"].append(float(val_metrics["recall"]))
+        history["val_f1"].append(float(val_metrics["f1"]))
+        history["val_exact_match"].append(float(val_metrics["exact_match"]))
+        history["lr"].append(float(current_lr))
         
         # Save best model
         if val_metrics["loss"] < best_val_loss:
@@ -421,10 +421,10 @@ def train(
     
     total_time = time.time() - start_time
     
-    # Save training history
-    history["total_time_seconds"] = total_time
-    history["best_val_loss"] = best_val_loss
-    history["final_epoch"] = epoch
+    # Save training history (convert to native Python types for JSON)
+    history["total_time_seconds"] = float(total_time)
+    history["best_val_loss"] = float(best_val_loss)
+    history["final_epoch"] = int(epoch)
     
     with open(os.path.join(checkpoint_dir, "history.json"), "w") as f:
         json.dump(history, f, indent=2)
